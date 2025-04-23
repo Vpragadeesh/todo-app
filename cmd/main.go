@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,7 +36,6 @@ func main() {
 	command := os.Args[1]
 	task := strings.Join(os.Args[2:], " ")
 
-	// Always check and update task dates first.
 	switch command {
 	case "add":
 		addTask(task)
@@ -42,6 +43,17 @@ func main() {
 		listTasks()
 	case "complete":
 		completeTask(task)
+	case "delete":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: todo delete <task index>")
+			return
+		}
+		index, err := strconv.Atoi(os.Args[2])
+		if err != nil {
+			fmt.Println("Invalid index:", os.Args[2])
+			return
+		}
+		deleteTask(index)
 	default:
 		fmt.Println("Unknown command:", command)
 	}
@@ -50,7 +62,6 @@ func main() {
 func addTask(task string) {
 	todos := postponeTodos(loadTodos())
 	today := time.Now().Format("2006-01-02")
-	// When adding a task, set its date to today.
 	todos = append(todos, Todo{Task: task, Date: today, Completed: false})
 	saveTodos(todos)
 	fmt.Println("Added:", task, "for", today)
@@ -58,31 +69,26 @@ func addTask(task string) {
 
 func listTasks() {
 	todos := postponeTodos(loadTodos())
+	sortTodos(todos)
 	todayStr := time.Now().Format("2006-01-02")
 	for i, todo := range todos {
-		// Completed tasks display a green check.
 		var icon string
 		if todo.Completed {
 			icon = colorGreen + "✔" + colorReset
 		} else {
 			icon = " " // no icon for unfinished tasks
 		}
-
-		// Determine the status.
 		var status string
 		if todo.Completed {
 			status = "completed"
+		} else if todo.Date == todayStr {
+			status = "ongoing"
 		} else {
-			if todo.Date == todayStr {
-				status = "ongoing"
-			} else {
-				status = "pending"
-			}
+			status = "pending"
 		}
-
-		// Print index, icon, task, due date (in blue) and status.
-		fmt.Printf("%d. [%s] %s - %s - %s\n",
-			i+1,
+		numCol := fmt.Sprintf("%d.", i+1)
+		fmt.Printf("%-4s [%s] %s - %s - %s\n",
+			numCol,
 			icon,
 			todo.Task,
 			colorBlue+todo.Date+colorReset,
@@ -92,7 +98,7 @@ func listTasks() {
 
 func completeTask(task string) {
 	todos := postponeTodos(loadTodos())
-	// Search and mark the matching task as completed.
+	// Find and update the matching task.
 	for i, todo := range todos {
 		if todo.Task == task {
 			todos[i].Completed = true
@@ -104,38 +110,56 @@ func completeTask(task string) {
 	fmt.Println("Task not found:", task)
 }
 
-// postponeTodos checks all tasks and applies two rules:
-// 1. If a task’s Date is empty, assume today’s date.
-// 2. If a task is unfinished and its date is before today, postpone it to tomorrow.
+func deleteTask(index int) {
+	todos := postponeTodos(loadTodos())
+	// Sort the todos EXACTLY as they appear in the listTasks function
+	sortTodos(todos)
+
+	if index < 1 || index > len(todos) {
+		fmt.Println("Invalid index.")
+		return
+	}
+	removedTask := todos[index-1]
+	todos = append(todos[:index-1], todos[index:]...)
+	saveTodos(todos)
+	fmt.Println("Deleted:", removedTask.Task)
+}
+
+// sortTodos sorts the todos by date and then by task name.
+func sortTodos(todos []Todo) {
+	sort.Slice(todos, func(i, j int) bool {
+		if todos[i].Date == todos[j].Date {
+			return todos[i].Task < todos[j].Task
+		}
+		return todos[i].Date < todos[j].Date
+	})
+}
+
+// postponeTodos checks tasks and updates dates as needed.
+// If a task's date is empty, it defaults to today;
+// if an unfinished task's due date is before today, postpone it to tomorrow.
 func postponeTodos(todos []Todo) []Todo {
 	todayStr := time.Now().Format("2006-01-02")
 	today, _ := time.Parse("2006-01-02", todayStr)
 	updated := false
-
 	for i, todo := range todos {
-		// If Date is empty, assume it's for today.
 		if todo.Date == "" {
 			todos[i].Date = todayStr
 			updated = true
 			continue
 		}
-
 		due, err := time.Parse("2006-01-02", todo.Date)
 		if err != nil {
-			// If parsing fails, default the date to today.
 			todos[i].Date = todayStr
 			updated = true
 			continue
 		}
-
-		// For unfinished tasks, if the due date is before today, postpone to tomorrow.
 		if !todo.Completed && due.Before(today) {
 			newDue := today.AddDate(0, 0, 1)
 			todos[i].Date = newDue.Format("2006-01-02")
 			updated = true
 		}
 	}
-
 	if updated {
 		saveTodos(todos)
 	}
